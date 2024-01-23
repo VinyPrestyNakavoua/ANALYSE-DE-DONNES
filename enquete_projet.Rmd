@@ -1,0 +1,647 @@
+---
+title: "enquete_projet"
+author: "Viny Presty NAKAVOUA"
+date: "2024-01-22"
+output: html_document
+---
+
+
+# 1. importing data and modules
+
+```{r}
+library(readxl)
+library(dplyr)
+df <- read_excel("BDD_test3.xlsx")
+```
+
+# 2. Apurement de la base de données
+
+## dimension of the data frame
+On a formaté les données : gestion des incohérences, typo et unités
+On a 749 individus car on a dû supprimer un individu atypique dont  age 442 ans, poids 18 kg et taille 542 cm, horodateur : 2021/12/08 10:12:54 AM UTC+1
+On a fait des imputations par la médiane car la moyenne est suceptible d'être biaisé
+Pour les questions filtres dont non ou jamais avait une réponse, on a eu trois approches :
+
+- Première option : remplacer des Oui aux questions filtres dichotomiques 
+-Deuxième option : remplacer les vides aux questions suivantes pour ceux qui ont dit non
+-Troisième option : ne rien changer ce qui va complètement biaiser les statistiques (je le recommande moins
+
+on a utilisé la 1ère(quand il y avait un nombre important de données fournies par l'indivi) et 2e approche quand il y avait peu de données et peu individus dans cette situation
+
+
+```{r}
+length(df)
+nrow(df)
+```
+
+# 3. Traitement des variables liées à l'alimentation
+## 3.1 Création des variables binaire extraites de la variable quels types d'aliments consommez-vous régulièrement ?
+
+```{r}
+# Liste complète des modalités d'aliments
+modalites_aliments <- c("Viande rouge", "Viande blanche", "Oeufs", "Poisson", "Fruit de mer", "Légumes", "Legume vert", "Pâte, Riz, Blé (complet non raffinés)", "Pâte, Riz, Blé (et autres féculents raffinés)", "Graines (noix, amandes, sésame..)", "Ail, Oignon", "Piments", "Epices (Curcuma, Gingembre..)", "Agrumes", "Fruit rouges", "Autres fruits", "Café", "Thé", "Tablette chocolat noir +70%", "Gateaux et autres chocolats", "Gateaux aperitif (salé)", "Soda", "Sauce et produits transformés (Box, plat préparés, sandwich industriels)", "Alcool")
+
+# Création des variables binaires pour chaque type d'aliment
+for (aliment in modalites_aliments) {
+  df[paste0("consommation_", gsub(" ", "_", aliment))] <- grepl(aliment, df$`Quels types d’aliments consommez-vous régulièrement ?`)
+}
+
+```
+
+## 3.2 création des variables : IMC et statut_IMC
+### 3.2.1 Variable IMC
+
+#### Assurez-vous que les colonnes de poids et de taille sont numériques
+```{r}
+df$`Quel est votre poids ?` <- as.numeric(df$`Quel est votre poids ?`)
+df$`Quelle est votre taille ? (en cm)` <- as.numeric(df$`Quelle est votre taille ? (en cm)`)
+
+```
+
+#### Convertir la taille en mètres (car la formule de l'IMC utilise la taille en mètres au carré)
+
+```{r}
+df$taille_en_metres <- df$`Quelle est votre taille ? (en cm)` / 100
+```
+
+#### Calcul de l'IMC
+
+```{r}
+df$IMC <- df$`Quel est votre poids ?` / (df$taille_en_metres^2)
+
+```
+
+### 3.2.2  Variable statut_IMC
+Catégories selon l'OMS
+
+```{r}
+df$Statut_IMC <- cut(df$IMC,
+                     breaks = c(-Inf, 18.5, 24.9, 29.9, Inf),
+                     labels = c("Maigre", "Normal", "Surpoids", "Obèse"),
+                     include.lowest = TRUE)
+```
+
+
+
+
+# 4. Traitement des variables liées au sommeil : Une seule qui est Combien de temps dormez-vous ? (en moyenne)
+
+## 4.2 Création de la variable : duree_sommeil_heures 
+### 4.2.3 variable duree_sommeil_heures
+
+#### Assurez-vous que la variable est de type caractère
+```{r}
+df$`Combien de temps dormez-vous ? (en moyenne)` <- as.character(df$`Combien de temps dormez-vous ? (en moyenne)`)
+
+```
+
+#### Séparez les heures, minutes et secondes
+```{r}
+temps_dormir <- strsplit(df$`Combien de temps dormez-vous ? (en moyenne)`, ":")
+
+```
+
+
+#### Convertissez chaque élément en heures et ajoutez-les
+```{r}
+df$duree_sommeil_heures <- sapply(temps_dormir, function(x) as.numeric(x[1]) + as.numeric(x[2])/60 + as.numeric(x[3])/3600)
+```
+
+### 4.2.3 variable Statut_Sommeil
+
+#### Création d'une nouvelle variable catégorielle "Statut_Sommeil" en fonction de l'âge
+```{r}
+df$Statut_Sommeil <- "Non recommandé"  # Initialisation avec la valeur par défaut
+
+```
+
+
+#### Ajustement en fonction de l'âge
+```{r}
+df$Statut_Sommeil[df$`Quel est votre âge ?` >= 14 & df$`Quel est votre âge ?` <= 17 & df$duree_sommeil_heures >= 8 & df$duree_sommeil_heures <= 10] <- "Recommandé"  # Adolescents
+df$Statut_Sommeil[df$`Quel est votre âge ?` >= 18 & df$`Quel est votre âge ?` <= 25 & df$duree_sommeil_heures >= 7 & df$duree_sommeil_heures <= 9] <- "Recommandé"  # Jeunes adultes
+df$Statut_Sommeil[df$`Quel est votre âge ?` >= 26 & df$`Quel est votre âge ?` <= 64 & df$duree_sommeil_heures >= 7 & df$duree_sommeil_heures <= 9] <- "Recommandé"  # Adultes
+
+```
+
+
+# 5. Analyse univariée des variables liées à l'alimentation
+## 5.1 descriptions de la population :
+### sexe 
+
+```{r}
+library(ggplot2)
+
+# Renommer la variable pour la simplifier
+df$sexe <- df$`Quel est votre sexe ?`
+
+# Créer le graphique
+ggplot(df, aes(x = sexe, fill = sexe)) +
+  geom_bar(color = "black", alpha = 0.7) +
+  
+  # Ajouter des labels informatifs
+  labs(title = "Distribution du sexe dans l'ensemble de données",
+       x = "Sexe",
+       y = "nombre d'étudiants") +
+  
+  # Ajouter des étiquettes aux barres
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
+  
+  # Améliorer l'apparence
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12), 
+        axis.title = element_text(size = 14, face = "bold"),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5))
+
+```
+
+### age
+```{r}
+ggplot(df, aes(x = df$`Quel est votre âge ?`)) +
+  geom_histogram(aes(y = ..density..), bins = 22, fill = "darkseagreen1", color = "black") +
+  geom_density(color = "blue", linewidth = 1) +  # Courbe de densité en bleu
+  labs(title = "Répartition des âges", x = "Ages", y = "Densité") +
+  theme_minimal()
+
+```
+
+
+### IMC
+
+```{r}
+tab4 <- table(df$Statut_IMC)
+round(prop.table(tab4)*100,0)
+```
+
+### age selon le sexe
+```{r}
+ggplot(df)+aes(y=df$`Quel est votre âge ?`, x=df$`Quel est votre sexe ?`)+geom_boxplot()
+```
+
+
+## 5.2 nombre de repas par jour
+
+```{r}
+library(ggplot2)
+
+# Renommer la variable pour la simplifier
+df$nb_repas <- df$`Combien de repas prenez-vous dans la journée? (hors grignotage)`
+
+# Créer le graphique
+ggplot(df, aes(x = nb_repas)) +
+  geom_bar(fill = "skyblue", color = "black", alpha = 0.7) +
+  
+  # Ajouter des labels informatifs
+  labs(title = "Distribution du nombre de repas par jour",
+       x = "Nombre de repas par jour",
+       y = "nombre d'étudiants") +
+  
+  # Ajouter des étiquettes aux barres
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
+  
+  # Améliorer l'apparence
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12), 
+        axis.title = element_text(size = 14, face = "bold"),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5))
+
+```
+
+
+## 5.3 consommation des compléments alimentaires :
+
+```{r}
+tab <- table(df$`Prenez-vous des compléments alimentaires ?`)
+round(prop.table(tab)*100,0)
+```
+
+```{r}
+# Calculer la table des fréquences
+tab <- table(df$`Prenez-vous des compléments alimentaires ?`)
+
+# Calculer les pourcentages
+percentages <- round(prop.table(tab) * 100, 0)
+
+# Afficher la table des pourcentages
+print(percentages)
+
+# Créer le graphique en camembert
+pie(tab, main = "Répartition de la prise de compléments alimentaires", col = rainbow(length(tab)))
+
+# Ajouter les pourcentages sur le graphique
+legend("topright", legend = paste(names(tab), "(", percentages, "%)"), cex = 0.8, fill = rainbow(length(tab)))
+
+```
+
+## 5.4 consommation d'alcool :
+
+```{r}
+tab1 <- table(df$consommation_Alcool)
+round(prop.table(tab1)*100,0)
+```
+
+```{r}
+# Calculer la table des fréquences pour la consommation d'alcool
+tab1 <- table(df$consommation_Alcool)
+
+# Calculer les pourcentages
+percentages1 <- round(prop.table(tab1) * 100, 0)
+
+# Afficher la table des pourcentages
+print(percentages1)
+
+# Créer le graphique en camembert
+pie(tab1, main = "Répartition de la consommation d'alcool", col = rainbow(length(tab1)))
+
+# Ajouter les pourcentages sur le graphique
+legend("topright", legend = paste(names(tab1), "(", percentages1, "%)"), cex = 0.8, fill = rainbow(length(tab1)))
+
+```
+
+
+## 5.5 Lorsque vous mangez chez vous, comment qualifieriez-vous la cuisine ?
+
+```{r}
+library(ggplot2)
+
+# Renommer la variable pour la simplifier
+df$cuisine_qualite <- df$`Lorsque vous mangez chez vous, comment qualifieriez-vous la cuisine ?`
+
+# Créer le graphique
+ggplot(df, aes(x = cuisine_qualite)) +
+  geom_bar(fill = "skyblue", color = "black", alpha = 0.7) +
+  
+  # Ajouter des labels informatifs
+  labs(title = "Qualification de la cuisine lorsque vous mangez chez vous",
+       x = "Qualité de la cuisine",
+       y = "nombre d'étudiants") +
+  
+  # Ajouter des étiquettes aux barres
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
+  
+  # Améliorer l'apparence
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12), 
+        axis.title = element_text(size = 14, face = "bold"),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5))
+
+```
+
+```{r}
+tab2 <- table(df$`Lorsque vous mangez chez vous, comment qualifieriez-vous la cuisine ?`)
+prop.table(tab2*100)
+```
+
+
+
+### durée de repas
+
+```{r}
+library(ggplot2)
+
+# Renommer la variable pour la simplifier
+df$durée_repas <- df$`Quelle est la durée approximative de vos repas ?`
+
+# Créer le graphique
+ggplot(df, aes(x = durée_repas)) +
+  geom_bar(fill = "skyblue", color = "black", alpha = 0.7) +
+  
+  # Ajouter des labels informatifs
+  labs(title = "Distribution de la durée approximative des repas",
+       x = "durée approximative des repas",
+       y = "nombre d'étudiants") +
+  
+  # Ajouter des étiquettes aux barres
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
+  
+  # Améliorer l'apparence
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12), 
+        axis.title = element_text(size = 14, face = "bold"),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5))
+```
+
+
+# 6. Lien avec le sommeil :
+## 6.0 quelques statistiques :
+### durée moyenne de moyenne :
+```{r}
+mean(df$duree_sommeil_heures)
+```
+
+### heure recommandé :
+```{r}
+tab5 <- table(df$Statut_Sommeil)
+round((tab5/749)*100,0)
+```
+
+
+```{r}
+# Calculer la table des fréquences pour le statut de sommeil
+tab5 <- table(df$Statut_Sommeil)
+
+# Calculer les pourcentages
+percentages5 <- round((tab5 / 749) * 100, 0)
+
+# Afficher la table des pourcentages
+print(percentages5)
+
+# Créer le graphique en camembert
+pie(tab5, main = "Répartition du statut de sommeil", col = rainbow(length(tab5)))
+
+# Ajouter les pourcentages sur le graphique
+legend("topright", legend = paste(names(tab5), "(", percentages5, "%)"), cex = 0.8, fill = rainbow(length(tab5)))
+
+```
+
+
+## 6.1 duree de sommeil en heure et le nombre de repas dans la journée
+### 6.1.2 visualisation :
+
+```{r}
+ggplot(df)+aes(y=df$duree_sommeil_heures, x=df$`Combien de repas prenez-vous dans la journée? (hors grignotage)`)+geom_boxplot()
+```
+
+### 6.2.3 Résumés statistiques
+
+```{r}
+# Utilisation de la fonction tapply pour obtenir des statistiques descriptives
+summary_by_repas <- tapply(df$duree_sommeil_heures, df$`Combien de repas prenez-vous dans la journée? (hors grignotage)`, summary)
+
+# Convertir le résultat en dataframe pour une meilleure lisibilité
+summary_df <- as.data.frame(do.call(rbind, summary_by_repas))
+
+# Renommer les colonnes pour une meilleure lisibilité
+colnames(summary_df) <- c("Min", "Q1", "Median", "Mean", "Q3", "Max")
+
+# Afficher le résumé
+print(round(summary_df,2))
+
+```
+
+
+#### Conclusion :
+On voit que les boxplots ne se chauvechent pas vraiment et que plus le nombre de repas par jour augmente plus la durée de sommeil augmente.
+En conclusion, il semble y avoir une association significative entre le nombre de repas pris dans la journée (hors grignotage) et la durée du sommeil
+
+## 6.3 durée de sommeil en heure et la consommation d'alcool
+
+```{r}
+ggplot(df)+aes(y=df$duree_sommeil_heures, x=df$consommation_Alcool)+geom_boxplot()
+```
+
+
+### 6.3.3 Résumés statistiques
+
+```{r}
+# Utilisation de la fonction tapply pour obtenir des statistiques descriptives
+summary_by_repas <- tapply(df$duree_sommeil_heures, df$consommation_Alcool, summary)
+
+# Convertir le résultat en dataframe pour une meilleure lisibilité
+summary_df <- as.data.frame(do.call(rbind, summary_by_repas))
+
+# Renommer les colonnes pour une meilleure lisibilité
+colnames(summary_df) <- c("Min", "Q1", "Median", "Mean", "Q3", "Max")
+
+# Afficher le résumé
+print(round(summary_df,2))
+
+```
+
+
+
+
+
+# 7. Lien activité physique
+## 7.0 quelques statistiques
+
+```{r}
+tab6 <- table(df$`Pratiquez-vous une activité physique quotidienne de type marche ou vélo pour vos déplacements ? (+ de 20min/jour)`)
+tab6*100
+```
+
+
+```{r}
+# Calculer la table des fréquences pour la pratique de l'activité physique quotidienne
+tab6 <- table(df$`Pratiquez-vous une activité physique quotidienne de type marche ou vélo pour vos déplacements ? (+ de 20min/jour)`)
+
+# Calculer les pourcentages
+percentages6 <- round(prop.table(tab6) * 100, 0)
+
+# Afficher la table des pourcentages
+print(percentages6)
+
+# Créer le graphique en camembert
+pie(tab6, main = "Répartition de la pratique de l'activité physique quotidienne", col = rainbow(length(tab6)))
+
+# Ajouter les pourcentages sur le graphique
+legend("topright", legend = paste(names(tab6), "(", percentages6, "%)"), cex = 0.8, fill = rainbow(length(tab6)))
+
+```
+
+
+```{r}
+tab7 <- table(df$`pratiquez-vous une activité sportive régulière ?`)
+tab7*100
+```
+
+
+```{r}
+# Calculer la table des fréquences pour la pratique d'une activité sportive régulière
+tab7 <- table(df$`pratiquez-vous une activité sportive régulière ?`)
+
+# Calculer les pourcentages
+percentages7 <- round(prop.table(tab7) * 100, 0)
+
+# Afficher la table des pourcentages
+print(percentages7)
+
+# Créer le graphique en camembert
+pie(tab7, main = "Répartition de la pratique d'une activité sportive régulière", col = rainbow(length(tab7)))
+
+# Ajouter les pourcentages sur le graphique
+legend("topright", legend = paste(names(tab7), "(", percentages7, "%)"), cex = 0.8, fill = rainbow(length(tab7)))
+
+```
+
+
+## 7.1 pratique de l'activité physique et la consommation d'alcool
+
+```{r}
+ggplot(df)+aes(x=df$`Combien de repas prenez-vous dans la journée? (hors grignotage)`)+geom_bar(aes(fill=df$activite_physique))
+```
+
+
+## 7.2  pratique de l'activité physique et fumeurs :
+
+```{r}
+library(ggplot2)
+
+# Renommer la variable pour la simplifier
+df$activite_physique <- df$`Pratiquez-vous une activité physique quotidienne de type marche ou vélo pour vos déplacements ? (+ de 20min/jour)`
+df$fumez <- df$`Est-ce que vous fumez ?`
+
+# Créer le graphique en barres avec étiquettes
+ggplot(df, aes(x = activite_physique, fill = fumez)) +
+  geom_bar(position = "stack", color = "black", alpha = 0.7) +
+  
+  # Ajouter des labels informatifs
+  labs(title = "Relation entre la pratique du sport et le tabagisme",
+       x = "Pratique du Sport Quotidienne",
+       y = "Nombre de Participants",
+       fill = "Fumez-vous ?") +
+  
+  # Ajouter des étiquettes aux barres
+  geom_text(stat = "count", aes(label = ..count..), position = position_stack(vjust = 0.5)) +
+  
+  # Améliorer l'apparence
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12), 
+        axis.title = element_text(size = 14, face = "bold"),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5))
+
+
+```
+
+on se dit que ici que ceux qui  pratiquent plus le sport sont ceux qui ne fument pas car les fumeurs sont un peu réticants par rapport aux problèmes cardiaques
+
+
+
+## 7.3 Activité physique quotidienne et Durée approximative des repas
+
+```{r}
+library(ggplot2)
+
+# Créer un graphique en barres
+ggplot(df, aes(x = df$`pratiquez-vous une activité sportive régulière ?`, fill = `Quelle est la durée approximative de vos repas ?`)) +
+  geom_bar(position = "stack", color = "black", alpha = 0.7) +
+  
+  # Ajouter des labels informatifs
+  labs(title = "Relation entre l'activité physique quotidienne et la durée approximative des repas",
+       x = "Activité Physique Quotidienne",
+       y = "Nombre de Participants",
+       fill = "Durée Approximative des Repas") +
+  
+  # Améliorer l'apparence
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12), 
+        axis.title = element_text(size = 14, face = "bold"),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5))
+```
+
+La durée de repas moyenne de ce qui pratique le sport est largement plus grande que pour ceux qui ne partiquent pas le sport
+
+
+# 8 Lien avec la santé :
+## 8.1  Problèmes de Santé chez les Fumeurs et Non-Fumeurs par Niveau d'Activité Sportive:
+
+```{r}
+ggplot(df, aes(x = df$`Est-ce que vous fumez ?`, fill = df$`Avez-vous des problèmes de santé (handicapant) ?`)) +
+  geom_bar(position = "stack") +
+  facet_wrap(~ df$`pratiquez-vous une activité sportive régulière ?`) +
+  labs(title = "Problèmes de Santé chez les Fumeurs et Non-Fumeurs par Niveau d'Activité Sportive",
+       x = "Statut de Fumeur",
+       y = "Nombre de Personnes",
+       fill = "Problèmes de Santé")
+
+```
+
+
+
+
+## 8.2 problème d'oublis chez les fumeurs et non fumeurs
+
+```{r}
+ggplot(df)+aes(x=df$`Est-ce que vous fumez ?`)+geom_bar(aes(fill = df$`Vous arrive t-il d’oublier des évènements mineurs : RDV, dates, promesses, vos enfants sur l’autoroute (par ex) ?`))+
+  labs(title = "Problèmes de Santé chez les Fumeurs et Non-Fumeurs ",
+       x = "Statut de Fumeur",
+       y = "Nombre de Personnes",
+       fill = "oublis")
+```
+
+
+Les personnes qui fument oublient plus qu'ils n'oublient donc le fait de fumer pourrait altérer notre mémoire.
+
+## Illustration : Problèmes de Santé chez les Fumeurs et Non-Fumeurs par Niveau d'Activité Sportive
+
+```{r}
+ggplot(df, aes(x = df$`Est-ce que vous fumez ?`, fill = df$`Vous arrive t-il d’oublier des évènements mineurs : RDV, dates, promesses, vos enfants sur l’autoroute (par ex) ?`)) +
+  geom_bar(position = "stack") +
+  facet_wrap(~ df$`pratiquez-vous une activité sportive régulière ?`) +
+  labs(title = "Problèmes de Santé chez les Fumeurs et Non-Fumeurs par Niveau d'Activité Sportive",
+       x = "Statut de Fumeur",
+       y = "Nombre de Personnes",
+       fill = "oublis")
+```
+
+
+## 8.3 nombre de repas et les oublis
+
+```{r}
+library(ggplot2)
+
+# Créer un graphique en barres empilées pour les deux variables qualitatives
+ggplot(df, aes(x = df$`Combien de repas prenez-vous dans la journée? (hors grignotage)`, fill = `Vous arrive t-il d’oublier des évènements mineurs : RDV, dates, promesses, vos enfants sur l’autoroute (par ex) ?`)) +
+  geom_bar(position = "dodge", color = "black", alpha = 0.7) +
+  
+  # Ajouter des labels informatifs
+  labs(title = "Relation entre l'activité physique quotidienne et l'oubli d'événements mineurs",
+       x = "nombre de repas",
+       y = "Nombre de Participants",
+       fill = "Oubli d'événements mineurs") +
+  
+  # Améliorer l'apparence
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12), 
+        axis.title = element_text(size = 14, face = "bold"),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5))
+
+```
+
+
+##8.4 nombre de repas et le nombre de fois tombé malade
+
+```{r}
+library(ggplot2)
+
+# Créer un graphique en barres juxtaposées pour les deux variables qualitatives
+ggplot(df, aes(x = `Combien de repas prenez-vous dans la journée? (hors grignotage)`, fill = `Tombez-vous souvent malade ? (estimation, quelque soit l'intensité de la maladie)`)) +
+  geom_bar(position = "dodge", color = "black", alpha = 0.7) +
+  
+  # Ajouter des labels informatifs
+  labs(title = "Relation entre l'activité physique quotidienne et l'oubli d'événements mineurs",
+       x = "Nombre de repas",
+       y = "Nombre de Participants",
+       fill = "Nombre de fois tombé malade") +
+  
+  # Incliner les étiquettes sur l'axe des abscisses
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14, face = "bold"),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+
+```{r}
+library(ggplot2)
+
+# Créer un graphique en barres juxtaposées pour les deux variables qualitatives
+ggplot(df, aes(x = `Combien de repas prenez-vous dans la journée? (hors grignotage)`, fill = df$`Vous arrive t-il d’avoir des pertes d'énergie, faiblesses ou fatigues soudaines ?`)) +
+  geom_bar(position = "dodge", color = "black", alpha = 0.7) +
+  
+  # Ajouter des labels informatifs
+  labs(title = "Relation entre l'activité physique quotidienne et l'oubli d'événements mineurs",
+       x = "Nombre de repas",
+       y = "Nombre de Participants",
+       fill = "Perte d'allergie, faiblesses ou fatigues soudaines") +
+  
+  # Incliner les étiquettes sur l'axe des abscisses
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 14, face = "bold"),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
